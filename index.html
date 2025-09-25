@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Carte des structures</title>
+  <noscript>Cette page redirige vers map_leaflet_template.html. Activez JavaScript.</noscript>
+  <style>body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;padding:24px}</style>
+</head>
+<body>
+  <p>Redirection vers la carte…</p>
+  <script>
+    // Redirige vers le fichier principal en conservant la query (?csv=...)
+    var target = "map_leaflet_template.html" + (location.search || "");
+    location.replace(target);
+  </script>
+  <p>Si la redirection ne fonctionne pas, <a id="link" href="#">cliquez ici</a>.</p>
+  <script>document.getElementById("link").href = "map_leaflet_template.html" + (location.search || "");</script>
+</body>
+</html>
