@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Carte des structures (Leaflet)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100%; }
+    .popup { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; max-width: 260px; }
+    .popup b { font-size: 15px; color: #111827; }
+    .popup a { display: inline-block; margin-top: 6px; padding: 6px 10px; background: #111827; color: #fff; 
+               text-decoration: none; border-radius: 8px; font-size: 13px; }
+    .toolbar {
+      position: absolute; z-index: 1000; top: 10px; left: 10px;
+      background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12); font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif;
+      max-width: 420px;
+    }
+    .toolbar h1 { font-size: 16px; margin: 0 0 8px; color: #111827; }
+    .toolbar input[type="text"] { width: 100%; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px; }
+    .toolbar button { margin-top: 8px; padding: 8px 10px; border: 0; border-radius: 6px; background: #111827; color: #fff; cursor: pointer; }
+    .toolbar small { color: #475569; display: block; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="toolbar" class="toolbar" style="display:none;">
+    <h1>Charger vos données CSV</h1>
+    <input id="csvInput" type="text" placeholder="Collez ici le lien CSV public (Google Sheets → Publier → CSV)">
+    <button id="loadBtn">Charger la carte</button>
+    <small>Le CSV doit contenir ces en-têtes : <b>Nom, Latitude, Longitude, Lien Softr</b>.</small>
+  </div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
+  <script>
+    function getParam(name) {
+      const url = new URL(window.location.href);
+      return url.searchParams.get(name);
+    }
+    function setParam(name, value) {
+      const url = new URL(window.location.href);
+      url.searchParams.set(name, value);
+      window.location.href = url.toString();
+    }
+
+    const map = L.map('map').setView([46.8, 2.2], 6);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; OpenStreetMap contributors, &copy; CARTO',
+      subdomains: 'abcd',
+      maxZoom: 20
+    }).addTo(map);
+
+    const csvUrl = getParam('csv');
+    if (!csvUrl) {
+      const tb = document.getElementById('toolbar');
+      tb.style.display = 'block';
+      document.getElementById('loadBtn').addEventListener('click', () => {
+        const val = document.getElementById('csvInput').value.trim();
+        if (!val) { alert('Collez un lien CSV (Google Sheets publié en CSV).'); return; }
+        setParam('csv', val);
+      });
+    } else {
+      const markers = [];
+      Papa.parse(csvUrl, {
+        download: true,
+        header: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+          const rows = results.data || [];
+          rows.forEach(row => {
+            const lat = parseFloat((row['Latitude'] || '').toString().replace(',', '.'));
+            const lon = parseFloat((row['Longitude'] || '').toString().replace(',', '.'));
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+            const nom = row['Nom'] || 'Sans nom';
+            const lien = row['Lien Softr'] || '#';
+
+            const m = L.marker([lat, lon]).addTo(map);
+            m.bindPopup(`<div class="popup"><b>${nom}</b><br><a href="${lien}" target="_blank" rel="noopener">Voir la fiche</a></div>`);
+            markers.push(m);
+          });
+
+          if (markers.length) {
+            const group = L.featureGroup(markers);
+            map.fitBounds(group.getBounds(), { padding: [20, 20] });
+          } else {
+            const tb = document.getElementById('toolbar');
+            tb.style.display = 'block';
+            tb.querySelector('h1').textContent = "Aucun point trouvé. Vérifiez le CSV";
+          }
+        },
+        error: function(err) {
+          const tb = document.getElementById('toolbar');
+          tb.style.display = 'block';
+          tb.querySelector('h1').textContent = "Erreur de chargement CSV";
+          console.error('Erreur PapaParse:', err);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
