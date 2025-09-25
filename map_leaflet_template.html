@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Carte des structures partenaires – Pays de Nexon – Monts de Châlus</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Leaflet & MarkerCluster CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100%; }
+
+    /* Popups propres */
+    .popup { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; max-width: 260px; line-height: 1.35; }
+    .popup b { font-size: 15px; color: #111827; }
+    .popup a {
+      display: inline-block; margin-top: 6px; padding: 6px 10px;
+      background: #111827; color: #fff; text-decoration: none;
+      border-radius: 8px; font-size: 13px;
+    }
+
+    /* Badge de territoire */
+    .badge {
+      position: absolute; z-index: 1000; bottom: 10px; right: 10px;
+      background: rgba(17, 24, 39, 0.85); color: #fff; padding: 6px 10px;
+      border-radius: 999px; font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif;
+      font-size: 12px;
+    }
+
+    /* Labels de villes (si colonne "Commune" présente) */
+    .town-label {
+      background: rgba(255,255,255,0.85);
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid #e5e7eb;
+      font: 600 12px/1 system-ui, Segoe UI, Roboto, Arial, sans-serif;
+      color: #111827;
+      white-space: nowrap;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      pointer-events: none;
+    }
+
+    /* Légère amélioration du contrôle zoom */
+    .leaflet-control-zoom a {
+      border-radius: 8px !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="badge">Pays de Nexon – Monts de Châlus</div>
+
+  <!-- JS libs -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+
+  <script>
+    // =========================================
+    // 1) CONFIG — TON CSV public (Google Sheets)
+    // =========================================
+    const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQJnRkWT8yxmvDfM5Fit7BDXgndCap0EqkC6I1txP719Glu0GNC9Ghh03tyVQCc3XXQBi7QVewbpzFE/pub?output=csv";
+    // Colonnes attendues (casse/espaces identiques) : Nom, Latitude, Longitude, Lien Softr
+    // Optionnel : Commune (pour afficher des labels de ville)
+
+    // =================================================
+    // 2) Carte — fond élégant + init (recalé ensuite)
+    // =================================================
+    const map = L.map('map', { zoomControl: true }).setView([46.8, 2.2], 6); // France (zoom auto après)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; OpenStreetMap contributors, &copy; CARTO',
+      subdomains: 'abcd',
+      maxZoom: 20
+    }).addTo(map);
+
+    // Groupe de clusters pour lisibilité si beaucoup de points
+    const clusterGroup = L.markerClusterGroup({
+      showCoverageOnHover: false,
+      spiderfyOnMaxZoom: true,
+      disableClusteringAtZoom: 15
+    }).addTo(map);
+
+    // Calques pour labels de villes (calculés depuis les données si "Commune" existe)
+    const townLabelLayer = L.layerGroup().addTo(map);
+
+    // Contour EPCI (Pays de Nexon – Monts de Châlus, code INSEE/SIREN : 200070506)
+    let epciBounds = null;
+    fetch('https://geo.api.gouv.fr/epcis/200070506?format=geojson&geometry=contour')
+      .then(r => r.json())
+      .then(geo => {
+        const epciLayer = L.geoJSON(geo, {
+          style: { color: '#2563eb', weight: 2, fillColor: '#93c5fd', fillOpacity: 0.08 }
+        }).addTo(map);
+        epciBounds = epciLayer.getBounds();
+        // On ne cadre pas ici tout de suite : on attend aussi les points
+      })
+      .catch(err => console.error('EPCI GeoJSON error:', err));
+
+    // Utils
+    function toNum(v) {
+      if (v === null || v === undefined) return NaN;
+      const s = v.toString().trim().replace(',', '.');
+      const n = parseFloat(s);
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    const markers = [];
+    const townsAgg = {}; // { 'Nexon': {latSum, lonSum, count} }
+
+    function addMarker(row) {
+      const lat = toNum(row['Latitude']);
+      const lon = toNum(row['Longitude']);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+      const nom  = row['Nom'] || 'Sans nom';
+      const lien = row['Lien Softr'] || '#';
+
+      const m = L.marker([lat, lon]);
+      m.bindPopup(`<div class="popup"><b>${nom}</b><br><a href="${lien}" target="_blank" rel="noopener">Voir la fiche</a></div>`);
+      clusterGroup.addLayer(m);
+      markers.push(m);
+
+      // Agréger par commune si la colonne existe
+      if (row['Commune']) {
+        const c = row['Commune'].toString().trim();
+        if (!townsAgg[c]) townsAgg[c] = { latSum: 0, lonSum: 0, count: 0 };
+        townsAgg[c].latSum += lat;
+        townsAgg[c].lonSum += lon;
+        townsAgg[c].count += 1;
+      }
+    }
+
+    function addTownLabelsFromData() {
+      townLabelLayer.clearLayers();
+      Object.keys(townsAgg).forEach(name => {
+        const { latSum, lonSum, count } = townsAgg[name];
+        if (count === 0) return;
+        const lat = latSum / count;
+        const lon = lonSum / count;
+
+        // Label discret et lisible
+        const label = L.divIcon({
+          className: 'town-label',
+          html: name,
+          iconSize: null // taille auto
+        });
+        L.marker([lat, lon], { icon: label, interactive: false }).addTo(townLabelLayer);
+      });
+    }
+
+    function finalizeView() {
+      // Cadrage : prioriser l’ensemble des points s’il y en a
+      if (markers.length) {
+        const group = L.featureGroup(markers);
+        map.fitBounds(group.getBounds(), { padding: [24, 24] });
+
+        // Limiter le pan autour des données (points + contour si dispo)
+        if (epciBounds) {
+          const union = group.getBounds().extend(epciBounds);
+          map.setMaxBounds(union.pad(0.25));
+        } else {
+          map.setMaxBounds(group.getBounds().pad(0.25));
+        }
+
+        const minZ = Math.max(map.getBoundsZoom(map.options.maxBounds, true) - 1, 2);
+        map.setMinZoom(minZ);
+      } else if (epciBounds) {
+        map.fitBounds(epciBounds, { padding: [24, 24] });
+        map.setMaxBounds(epciBounds.pad(0.25));
+        const minZ = Math.max(map.getBoundsZoom(map.options.maxBounds, true) - 1, 2);
+        map.setMinZoom(minZ);
+      }
+    }
+
+    // Charger le CSV
+    Papa.parse(CSV_URL, {
+      download: true,
+      header: true,
+      skipEmptyLines: true,
+      complete: function(results) {
+        const rows = results.data || [];
+        rows.forEach(addMarker);
+
+        // Ajouter des labels de villes si la colonne "Commune" existe & data présente
+        if (Object.keys(townsAgg).length > 0) {
+          addTownLabelsFromData();
+        }
+
+        finalizeView();
+
+        // Si l’EPCI arrive après, on recadre une fois à réception
+        const waitEpci = setInterval(() => {
+          if (epciBounds) { finalizeView(); clearInterval(waitEpci); }
+        }, 200);
+      },
+      error: function(err) {
+        console.error('Erreur PapaParse:', err);
+        alert("Erreur de chargement du CSV. Vérifie l’URL ou le format (output=csv).");
+      }
+    });
+  </script>
+</body>
+</html>
