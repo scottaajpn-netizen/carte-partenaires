@@ -2,40 +2,67 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
+  <title>Carte des structures partenaires</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Carte des structures (Leaflet)</title>
+
+  <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
     html, body { height: 100%; margin: 0; }
     #map { height: 100%; }
-    .popup { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; max-width: 260px; }
+
+    /* UI / Popups */
+    .popup { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; max-width: 260px; line-height: 1.35; }
     .popup b { font-size: 15px; color: #111827; }
-    .popup a { display: inline-block; margin-top: 6px; padding: 6px 10px; background: #111827; color: #fff; 
-               text-decoration: none; border-radius: 8px; font-size: 13px; }
+    .popup a {
+      display: inline-block; margin-top: 6px; padding: 6px 10px;
+      background: #111827; color: #fff; text-decoration: none;
+      border-radius: 8px; font-size: 13px;
+    }
+
     .toolbar {
       position: absolute; z-index: 1000; top: 10px; left: 10px;
-      background: rgba(255,255,255,0.95); padding: 10px; border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.12); font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif;
-      max-width: 420px;
+      background: rgba(255,255,255,0.97); padding: 12px; border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+      font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; width: min(420px, 90vw);
     }
     .toolbar h1 { font-size: 16px; margin: 0 0 8px; color: #111827; }
-    .toolbar input[type="text"] { width: 100%; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px; }
-    .toolbar button { margin-top: 8px; padding: 8px 10px; border: 0; border-radius: 6px; background: #111827; color: #fff; cursor: pointer; }
+    .toolbar input[type="text"] {
+      width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px;
+      font-size: 14px;
+    }
+    .toolbar button {
+      margin-top: 8px; padding: 10px 12px; border: 0; border-radius: 8px;
+      background: #111827; color: #fff; cursor: pointer; font-weight: 600;
+    }
     .toolbar small { color: #475569; display: block; margin-top: 6px; }
+    .badge {
+      position: absolute; z-index: 1000; bottom: 10px; right: 10px;
+      background: rgba(17, 24, 39, 0.85); color: #fff; padding: 6px 10px;
+      border-radius: 999px; font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
+
+  <!-- Barre pour coller l’URL CSV si aucun ?csv= n’est fourni -->
   <div id="toolbar" class="toolbar" style="display:none;">
     <h1>Charger vos données CSV</h1>
-    <input id="csvInput" type="text" placeholder="Collez ici le lien CSV public (Google Sheets → Publier → CSV)">
+    <input id="csvInput" type="text" placeholder="Collez ici le lien CSV public (Google Sheets → Publier → CSV)">
     <button id="loadBtn">Charger la carte</button>
     <small>Le CSV doit contenir ces en-têtes : <b>Nom, Latitude, Longitude, Lien Softr</b>.</small>
   </div>
 
+  <div class="badge">Pays de Nexon – Monts de Châlus</div>
+
+  <!-- Leaflet + PapaParse -->
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
+
   <script>
+    // ----- helpers URL -----
     function getParam(name) {
       const url = new URL(window.location.href);
       return url.searchParams.get(name);
@@ -46,26 +73,58 @@
       window.location.href = url.toString();
     }
 
-    const map = L.map('map').setView([46.8, 2.2], 6);
+    // ----- carte -----
+    const map = L.map('map', {
+      zoomControl: true
+    }).setView([46.8, 2.2], 6); // centre France (sera recadré ensuite)
 
+    // Fond de carte (clair, élégant)
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; OpenStreetMap contributors, &copy; CARTO',
       subdomains: 'abcd',
       maxZoom: 20
     }).addTo(map);
 
+    // ----- tracer & cadrer sur l’EPCI Pays de Nexon – Monts de Châlus (code INSEE/SIREN: 200070506) -----
+    // Contour officiel via geo.api.gouv.fr
+    let epciBounds = null;
+    fetch('https://geo.api.gouv.fr/epcis/200070506?format=geojson&geometry=contour')
+      .then(r => r.json())
+      .then(geo => {
+        const epciLayer = L.geoJSON(geo, {
+          style: { color: '#2563eb', weight: 2, fillColor: '#93c5fd', fillOpacity: 0.08 }
+        }).addTo(map);
+        epciBounds = epciLayer.getBounds();
+        // On ne fitBounds pas ici immédiatement : on attend d’avoir aussi les marqueurs (si présents)
+      })
+      .catch(err => console.error('EPCI GeoJSON error:', err));
+
+    // ----- chargement CSV -----
     const csvUrl = getParam('csv');
-    if (!csvUrl) {
-      const tb = document.getElementById('toolbar');
-      tb.style.display = 'block';
-      document.getElementById('loadBtn').addEventListener('click', () => {
-        const val = document.getElementById('csvInput').value.trim();
-        if (!val) { alert('Collez un lien CSV (Google Sheets publié en CSV).'); return; }
-        setParam('csv', val);
-      });
-    } else {
-      const markers = [];
-      Papa.parse(csvUrl, {
+    const markers = [];
+
+    function finalizeView() {
+      // Logique de cadrage : si on a des points, on cadre sur leurs bornes.
+      // Sinon, si on a le contour EPCI, on cadre dessus.
+      if (markers.length) {
+        const group = L.featureGroup(markers);
+        map.fitBounds(group.getBounds(), { padding: [20, 20] });
+        // Limiter le pan autour du territoire des points + EPCI si connu
+        if (epciBounds) map.setMaxBounds(group.getBounds().extend(epciBounds).pad(0.2));
+        else map.setMaxBounds(group.getBounds().pad(0.2));
+      } else if (epciBounds) {
+        map.fitBounds(epciBounds, { padding: [20, 20] });
+        map.setMaxBounds(epciBounds.pad(0.2));
+      }
+      // Empêcher de trop dézoomer si maxBounds défini
+      if (map.options.maxBounds) {
+        const zoomForBounds = map.getBoundsZoom(map.options.maxBounds, true);
+        map.setMinZoom(Math.max(zoomForBounds - 1, 2));
+      }
+    }
+
+    function loadCsv(url) {
+      Papa.parse(url, {
         download: true,
         header: true,
         skipEmptyLines: true,
@@ -76,7 +135,7 @@
             const lon = parseFloat((row['Longitude'] || '').toString().replace(',', '.'));
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
-            const nom = row['Nom'] || 'Sans nom';
+            const nom  = row['Nom'] || 'Sans nom';
             const lien = row['Lien Softr'] || '#';
 
             const m = L.marker([lat, lon]).addTo(map);
@@ -84,22 +143,37 @@
             markers.push(m);
           });
 
-          if (markers.length) {
-            const group = L.featureGroup(markers);
-            map.fitBounds(group.getBounds(), { padding: [20, 20] });
-          } else {
-            const tb = document.getElementById('toolbar');
-            tb.style.display = 'block';
-            tb.querySelector('h1').textContent = "Aucun point trouvé. Vérifiez le CSV";
-          }
+          finalizeView();
         },
         error: function(err) {
+          console.error('Erreur PapaParse:', err);
+          // Afficher la toolbar pour coller à la main si erreur
           const tb = document.getElementById('toolbar');
           tb.style.display = 'block';
-          tb.querySelector('h1').textContent = "Erreur de chargement CSV";
-          console.error('Erreur PapaParse:', err);
+          tb.querySelector('h1').textContent = "Erreur de chargement CSV — collez un autre lien";
         }
       });
+    }
+
+    if (!csvUrl) {
+      // Afficher la petite UI pour coller l’URL CSV
+      const tb = document.getElementById('toolbar');
+      tb.style.display = 'block';
+      document.getElementById('loadBtn').addEventListener('click', () => {
+        const val = document.getElementById('csvInput').value.trim();
+        if (!val) { alert('Collez un lien CSV public (Google Sheets → Publier → CSV).'); return; }
+        setParam('csv', val);
+      });
+      // Si le contour EPCI est déjà chargé, on cadre dessus
+      const checkInterval = setInterval(() => {
+        if (epciBounds) { finalizeView(); clearInterval(checkInterval); }
+      }, 200);
+    } else {
+      loadCsv(csvUrl);
+      // Si l’EPCI arrive après les points, finalizeView sera rappelé (markers existants)
+      const checkInterval = setInterval(() => {
+        if (epciBounds) { finalizeView(); clearInterval(checkInterval); }
+      }, 200);
     }
   </script>
 </body>
